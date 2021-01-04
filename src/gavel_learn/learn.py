@@ -125,7 +125,7 @@ def train_masked(gen):
     for epoch in range(10):
         print("Epoch", epoch)
         i = 0
-        for dbf in gen: #session.query(Formula.json).yield_per(100):
+        for dbf in gen(): #session.query(Formula.json).yield_per(100):
             f = p._parse_rec(dbf[0])
             net.prepare(f)
             optimizer.zero_grad()
