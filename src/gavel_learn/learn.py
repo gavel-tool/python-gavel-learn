@@ -13,7 +13,8 @@ class FormulaNet(torch.nn.Module, Compiler):
 
     def __init__(self):
         super().__init__()
-        self.length = 100
+        self._leaf_factor = 5
+        self.length = 50
         self.argument_limit = 5
         self.unary_formula = torch.nn.Linear(self.length, self.length)
         self.existential_quant = torch.nn.Linear(self.length, self.length)
@@ -21,6 +22,7 @@ class FormulaNet(torch.nn.Module, Compiler):
         self.binary_formula = torch.nn.Linear(3*self.length, self.length)
         self.predicate_formula = torch.nn.Linear((1 + self.argument_limit) * self.length, self.length)
         self.functor_formula = torch.nn.Linear((1 + self.argument_limit) * self.length, self.length)
+        self.leaf_net = torch.nn.Linear(self._leaf_factor * self.length, self.length)
         self._constant_cache = None
         self._functor_cache = None
         self._predicate_cache = None
@@ -47,58 +49,61 @@ class FormulaNet(torch.nn.Module, Compiler):
 
     def encode(self, x):
         i, o = x
-        v = torch.zeros(self.length)
-        v[i] = 1
+        v = torch.zeros(self._leaf_factor * self.length)
+        if i < self._leaf_factor * self.length:
+            v[i] = 1
+        else:
+            print(x)
         return o, v
 
-    def visit_defined_predicate(self, predicate: fol.DefinedPredicate, **kwargs):
-        return self._predicate_cache(predicate.value)
-
     def visit_unary_formula(self, formula: fol.UnaryFormula, **kwargs):
-        return self.unary_formula(self.visit(formula.formula, **kwargs))
+        return torch.relu(self.unary_formula(self.visit(formula.formula, **kwargs)))
 
     def visit_quantified_formula(self, formula: fol.QuantifiedFormula, **kwargs):
         if formula.quantifier == fol.Quantifier.EXISTENTIAL:
-            return self.existential_quant(self.visit(formula.formula))
+            return torch.relu(self.existential_quant(self.visit(formula.formula)))
         else:
-            return self.universal_quant(self.visit(formula.formula))
+            return torch.relu(self.universal_quant(self.visit(formula.formula)))
 
     def visit_annotated_formula(self, anno: problem.AnnotatedFormula, **kwargs):
         return self.visit(anno.formula)
 
     def visit_binary_formula(self, formula: fol.BinaryFormula):
-        return self.binary_formula(torch.cat([self.visit(formula.left),self.visit(formula.operator), self.visit(formula.right)], dim=-1))
+        return torch.relu(self.binary_formula(torch.cat([self.visit(formula.left),self.visit(formula.operator), self.visit(formula.right)], dim=-1)))
 
     def visit_functor_expression(self, expression: fol.FunctorExpression, **kwargs):
-        arguments = [self._functor_cache[expression.functor]]
+        arguments = [self.leaf_net(self._functor_cache[expression.functor])]
         arguments += [self.visit(a, **kwargs) for a in expression.arguments[:min(len(expression.arguments), self.argument_limit)]]
         # Fill missing arguments with zeros
         for _ in range(len(arguments)+1, self.argument_limit+2):
             arguments.append(torch.zeros(self.length))
-        return self.functor_formula(torch.cat(arguments, dim=-1))
+        return torch.relu(self.functor_formula(torch.cat(arguments, dim=-1)))
 
     def visit_predicate_expression(self, expression: fol.PredicateExpression, **kwargs):
-        arguments = [self._predicate_cache[expression.predicate]]
+        arguments = [self.leaf_net(self._predicate_cache[expression.predicate])]
         arguments += [self.visit(a, **kwargs) for a in expression.arguments[:min(len(expression.arguments), self.argument_limit)]]
         # Fill missing arguments with zeros
         for _ in range(len(arguments)+1, self.argument_limit+2):
             arguments.append(torch.zeros(self.length))
-        return self.predicate_formula(torch.cat(arguments, dim=-1))
+        return torch.relu(self.predicate_formula(torch.cat(arguments, dim=-1)))
 
     def visit_variable(self, variable: fol.Variable, **kwargs):
-        return self._variables_cache[variable.symbol]
+        return torch.relu(self.leaf_net(self._variables_cache[variable.symbol]))
 
     def visit_constant(self, obj: fol.Constant, **kwargs):
-        return self._constant_cache[obj.symbol]
+        return torch.relu(self.leaf_net(self._constant_cache[obj.symbol]))
 
     def visit_distinct_object(self, obj: fol.DistinctObject, **kwargs):
-        return self._constant_cache[obj.symbol]
+        return torch.relu(self.leaf_net(self._constant_cache[obj.symbol]))
 
     def visit_defined_constant(self, obj: fol.DefinedConstant, **kwargs):
-        return self._constant_cache[obj.value]
+        return torch.relu(self.leaf_net(self._constant_cache[obj.value]))
 
     def visit_binary_connective(self, connective: fol.BinaryConnective):
-        return self._binary_operator_cache[connective]
+        return torch.relu(self.leaf_net(self._binary_operator_cache[connective]))
+
+    def visit_defined_predicate(self, predicate: fol.DefinedPredicate, **kwargs):
+        return torch.relu(self.leaf_net(self._predicate_cache(predicate.value)))
 
     def visit_masked(self, masked: MaskedElement):
         return torch.zeros(self.length)
@@ -119,7 +124,9 @@ def train_masked(session):
     running_loss = 0.0
     p = DBLogicParser()
     for epoch in range(10):
-        for i, dbf in enumerate(session.query(Formula.json).yield_per(1), 0):
+        print("Epoch", epoch)
+        i = 0
+        for dbf in session.query(Formula.json).yield_per(100):
             f = p._parse_rec(dbf[0])
             net.prepare(f)
             optimizer.zero_grad()
@@ -131,7 +138,8 @@ def train_masked(session):
                 if j > 100:
                     break
                 ret = mc.visit(f)
-                formula, lab = ret
+                if len(ret) == 2:
+                    formula, lab = ret
                 j+=1
             if lab:
                 label = torch.zeros(net.length)
@@ -145,5 +153,6 @@ def train_masked(session):
                     print('[%d, %5d] loss: %.3f' %
                           (epoch + 1, i + 1, running_loss / 2000))
                     running_loss = 0.0
+                i += 1
     torch.save(net.state_dict(), "mask_encoder.state")
     print('Finished Training')

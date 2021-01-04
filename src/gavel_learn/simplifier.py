@@ -102,12 +102,16 @@ class MaskCompiler(Compiler):
         if ran <= 1:
             l, masked = self.visit(formula.left, **kwargs)
         if not masked:
-            r, masked = self.visit(formula.right, **kwargs)
+            x = self.visit(formula.right, **kwargs)
+            r, masked = x
         if not masked:
             o, masked = self.visit(formula.operator, **kwargs)
         return fol.BinaryFormula(left=l, operator=o, right=r), masked
 
     def visit_constant(self, constant: fol.Constant):
+        return constant, None
+
+    def visit_defined_constant(self, constant: fol.DefinedConstant):
         return constant, None
 
     def visit_variable(self, variable: fol.Variable):
