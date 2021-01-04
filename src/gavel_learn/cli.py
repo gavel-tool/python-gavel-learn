@@ -18,10 +18,9 @@ __all__ = ["learn"]
 import os
 
 import gavel.config.settings as settings
-from gavel.dialects.tptp.parser import TPTPProblemParser, SimpleTPTPProofParser
 from gavel_db.dialects.db.parser import DBLogicParser
 from gavel_learn.learn import train_masked
-
+import pickle
 import click
 
 
@@ -36,9 +35,8 @@ def learn():
 def learn_masked(path, m=False):
     def gen():
         with open(path,"r") as f:
-            p = DBLogicParser()
-            for line in f.readlines():
-                yield p._parse_rec(line)
+            while True:
+                yield pickle.load(f)
     if m:
         _cache = list(gen())
 
