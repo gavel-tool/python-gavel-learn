@@ -52,8 +52,6 @@ class FormulaNet(torch.nn.Module, Compiler):
         v = torch.zeros(self._leaf_factor * self.length)
         if i < self._leaf_factor * self.length:
             v[i] = 1
-        else:
-            print(x)
         return o, v
 
     def visit_unary_formula(self, formula: fol.UnaryFormula, **kwargs):
