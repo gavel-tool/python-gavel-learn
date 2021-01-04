@@ -11,8 +11,9 @@ import pandas as pd
 
 class FormulaNet(torch.nn.Module, Compiler):
 
-    def __init__(self):
+    def __init__(self, device):
         super().__init__()
+        self.device = device
         self._leaf_factor = 5
         self.length = 50
         self.argument_limit = 5
@@ -49,7 +50,7 @@ class FormulaNet(torch.nn.Module, Compiler):
 
     def encode(self, x):
         i, o = x
-        v = torch.zeros(self._leaf_factor * self.length)
+        v = torch.zeros(self._leaf_factor * self.length).to(self.device)
         if i < self._leaf_factor * self.length:
             v[i] = 1
         return o, v
@@ -74,7 +75,7 @@ class FormulaNet(torch.nn.Module, Compiler):
         arguments += [self.visit(a, **kwargs) for a in expression.arguments[:min(len(expression.arguments), self.argument_limit)]]
         # Fill missing arguments with zeros
         for _ in range(len(arguments)+1, self.argument_limit+2):
-            arguments.append(torch.zeros(self.length))
+            arguments.append(torch.zeros(self.length).to(self.device))
         return torch.relu(self.functor_formula(torch.cat(arguments, dim=-1)))
 
     def visit_predicate_expression(self, expression: fol.PredicateExpression, **kwargs):
@@ -82,7 +83,7 @@ class FormulaNet(torch.nn.Module, Compiler):
         arguments += [self.visit(a, **kwargs) for a in expression.arguments[:min(len(expression.arguments), self.argument_limit)]]
         # Fill missing arguments with zeros
         for _ in range(len(arguments)+1, self.argument_limit+2):
-            arguments.append(torch.zeros(self.length))
+            arguments.append(torch.zeros(self.length).to(self.device))
         return torch.relu(self.predicate_formula(torch.cat(arguments, dim=-1)))
 
     def visit_variable(self, variable: fol.Variable, **kwargs):
@@ -104,7 +105,7 @@ class FormulaNet(torch.nn.Module, Compiler):
         return torch.relu(self.leaf_net(self._predicate_cache(predicate.value)))
 
     def visit_masked(self, masked: MaskedElement):
-        return torch.zeros(self.length)
+        return torch.zeros(self.length).to(self.device)
 
 
 class PremiseSelector(torch.nn.Module):
@@ -114,9 +115,13 @@ class PremiseSelector(torch.nn.Module):
 
 
 def train_masked(gen):
-    net = FormulaNet()
+
     if torch.cuda.is_available():
-        net.to(torch.device("cuda:0"))
+        device = torch.device("cuda:0")
+    else:
+        device = torch.device("cuda:0")
+    net = FormulaNet(device=device)
+    net.to(device)
     mc = MaskCompiler()
     optimizer = torch.optim.Adam(net.parameters())
     loss = torch.nn.MSELoss()
@@ -139,7 +144,7 @@ def train_masked(gen):
                     formula, lab = ret
                 j+=1
             if lab:
-                label = torch.zeros(net.length)
+                label = torch.zeros(net.length).to(device)
                 label[lab] = 1
                 prediction = net.forward(formula)
                 l = loss(prediction, label)
