@@ -32,8 +32,8 @@ def learn():
 
 @click.command()
 @click.argument("path", default=None)
-@click.option("m", default=False)
-def learn_masked(path, m):
+@click.option("--m", default=False)
+def learn_masked(path, m=False):
     def gen():
         with open(path,"r") as f:
             p = DBLogicParser()
