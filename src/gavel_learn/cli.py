@@ -34,7 +34,7 @@ def learn():
 @click.option("--m", default=False)
 def learn_masked(path, m=False):
     def gen():
-        with open(path,"r") as f:
+        with open(path,"rb") as f:
             while True:
                 yield pickle.load(f)
     if m:
