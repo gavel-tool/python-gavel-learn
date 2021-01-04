@@ -115,6 +115,8 @@ class PremiseSelector(torch.nn.Module):
 
 def train_masked(gen):
     net = FormulaNet()
+    if torch.cuda.is_available():
+        net.to(torch.device("cuda:0"))
     mc = MaskCompiler()
     optimizer = torch.optim.Adam(net.parameters())
     loss = torch.nn.MSELoss()
