@@ -115,8 +115,7 @@ class PremiseSelector(torch.nn.Module):
         super().__init__()
 
 
-@with_session
-def train_masked(session):
+def train_masked(gen):
     net = FormulaNet()
     mc = MaskCompiler()
     optimizer = torch.optim.Adam(net.parameters())
@@ -126,7 +125,7 @@ def train_masked(session):
     for epoch in range(10):
         print("Epoch", epoch)
         i = 0
-        for dbf in session.query(Formula.json).yield_per(100):
+        for dbf in gen: #session.query(Formula.json).yield_per(100):
             f = p._parse_rec(dbf[0])
             net.prepare(f)
             optimizer.zero_grad()
