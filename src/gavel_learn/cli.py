@@ -32,14 +32,21 @@ def learn():
 
 @click.command()
 @click.argument("path", default=None)
-def learn_masked(path):
-    p = DBLogicParser()
-
+@click.option("m", default=False)
+def learn_masked(path, m):
     def gen():
         with open(path,"r") as f:
+            p = DBLogicParser()
             for line in f.readlines():
-                return p.parse(line)
-    train_masked(gen)
+                yield p._parse_rec(line)
+    if m:
+        _cache = list(gen())
+
+        def g2():
+            return _cache
+        return train_masked(g2)
+    else:
+        train_masked(gen)
     print("Done:", path)
 
 

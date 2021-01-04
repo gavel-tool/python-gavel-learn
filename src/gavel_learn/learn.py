@@ -121,12 +121,10 @@ def train_masked(gen):
     optimizer = torch.optim.Adam(net.parameters())
     loss = torch.nn.MSELoss()
     running_loss = 0.0
-    p = DBLogicParser()
     for epoch in range(10):
         print("Epoch", epoch)
         i = 0
-        for dbf in gen(): #session.query(Formula.json).yield_per(100):
-            f = p._parse_rec(dbf[0])
+        for f in gen(): #session.query(Formula.json).yield_per(100):
             net.prepare(f)
             optimizer.zero_grad()
             lab = None
