@@ -177,5 +177,8 @@ def train_masked(gen):
         learning_curve.append(batch_loss)
     plt.plot(np.array(learning_curve), 'r')
     plt.savefig("curve.png")
+    with open("curve.json", "w") as o:
+        o.write(str(learning_curve))
+
     torch.save(net.state_dict(), "mask_encoder.state")
     print('Finished Training')
