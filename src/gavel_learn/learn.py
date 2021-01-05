@@ -11,16 +11,17 @@ class FormulaNet(torch.nn.Module, Compiler):
         super().__init__()
         self.device = device
         self._leaf_factor = 5
+        self._leaf_offset = 5
         self.length = 50
         self.argument_limit = 5
         self.unary_formula = torch.nn.Linear(self.length, self.length)
-        self.final = torch.nn.Linear(self.length, self._leaf_factor*self.length)
+        self.final = torch.nn.Linear(self.length, self._leaf_factor*self.length + self._leaf_offset)
         self.existential_quant = torch.nn.Linear(self.length, self.length)
         self.universal_quant = torch.nn.Linear(self.length, self.length)
         self.binary_formula = torch.nn.Linear(3*self.length, self.length)
         self.predicate_formula = torch.nn.Linear((1 + self.argument_limit) * self.length, self.length)
         self.functor_formula = torch.nn.Linear((1 + self.argument_limit) * self.length, self.length)
-        self.leaf_net = torch.nn.Linear(self._leaf_factor * self.length, self.length)
+        self.leaf_net = torch.nn.Linear(self._leaf_factor * self.length  + self._leaf_offset, self.length)
         self._constant_cache = None
         self._functor_cache = None
         self._predicate_cache = None
@@ -39,18 +40,21 @@ class FormulaNet(torch.nn.Module, Compiler):
             variables=set()
         )
         MapExtractor().visit(p,**maps)
-        self._constant_cache = dict(map(self.encode, enumerate(maps["constants"])))
-        self._functor_cache = dict(map(self.encode, enumerate(maps["functors"])))
-        self._predicate_cache = dict(map(self.encode, enumerate(maps["predicates"])))
-        self._binary_operator_cache = dict(map(self.encode, enumerate(fol.BinaryConnective)))
-        self._variables_cache = dict(map(self.encode, enumerate(maps["variables"])))
+        self._constant_cache = dict(map(self.encode(0), enumerate(maps["constants"])))
+        self._functor_cache = dict(map(self.encode(1), enumerate(maps["functors"])))
+        self._predicate_cache = dict(map(self.encode(2), enumerate(maps["predicates"])))
+        self._binary_operator_cache = dict(map(self.encode(3), enumerate(fol.BinaryConnective)))
+        self._variables_cache = dict(map(self.encode(4), enumerate(maps["variables"])))
 
     def encode(self, x):
-        i, o = x
-        v = torch.zeros(self._leaf_factor * self.length).to(self.device)
-        if i < self._leaf_factor * self.length:
-            v[i] = 1
-        return o, v
+        def inner(y):
+            i, o = y
+            v = torch.zeros(self._leaf_factor * self.length + self._leaf_offset).to(self.device)
+            if i < self._leaf_factor * self.length:
+                v[i + self._leaf_offset] = 1
+            v[x] = 1
+            return o, v
+        return inner
 
     def visit_unary_formula(self, formula: fol.UnaryFormula, **kwargs):
         return torch.relu(self.unary_formula(self.visit(formula.formula, **kwargs)))
@@ -116,7 +120,7 @@ def train_masked(gen):
     if torch.cuda.is_available():
         device = torch.device("cuda:0")
     else:
-        device = torch.device("cuda:0")
+        device = torch.device("cpu:0")
     net = FormulaNet(device=device)
     net.to(device)
     mc = MaskCompiler()
@@ -125,33 +129,32 @@ def train_masked(gen):
     running_loss = 0.0
     for epoch in range(10):
         print("Epoch", epoch)
-        i = 0
-        for f in gen():
-            net.prepare(f)
+
+        for batch in gen():
+            labels = []
+            predictions = []
             optimizer.zero_grad()
-            lab = None
-            j = 0
-            if isinstance(f, str):
-                continue
-            while lab is None:
-                if j > 100:
-                    break
-                ret = mc.visit(f)
-                if len(ret) == 2:
-                    formula, lab = ret
-                j+=1
-            if lab:
-                label = torch.zeros(net.length).to(device)
-                label[lab] = 1
-                prediction = net.forward(formula)
-                l = loss(prediction, label)
-                l.backward()
-                optimizer.step()
-                running_loss += l.item()
-                if i % 2000 == 1999:  # print every 2000 mini-batches
-                    print('[%d, %5d] loss: %.3f' %
-                          (epoch + 1, i + 1, running_loss / 2000))
-                    running_loss = 0.0
-                i += 1
+            for f in batch:
+                net.prepare(f)
+                formula, lab = mc.visit(f)
+                label = None
+                if isinstance(lab, fol.Constant):
+                    label = net._constant_cache[lab.symbol]
+                elif isinstance(lab, fol.DefinedConstant):
+                    label = net._constant_cache[lab.symbol]
+                elif isinstance(lab, tuple):
+                    if lab[1] == "predicate":
+                        label = net._predicate_cache[lab[0]]
+                    elif lab[1] == "functor":
+                        label = net._functor_cache[lab[0]]
+                if label is None:
+                    raise Exception(f"Missing handler for {lab} in {formula}")
+                else:
+                    labels.append(label)
+                    predictions.append(net.forward(formula))
+            l = loss(torch.stack(predictions), torch.stack(labels))
+            l.backward()
+            optimizer.step()
+            print(f"loss {l.item()}")
     torch.save(net.state_dict(), "mask_encoder.state")
     print('Finished Training')

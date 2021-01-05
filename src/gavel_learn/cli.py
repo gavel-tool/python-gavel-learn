@@ -18,7 +18,9 @@ __all__ = ["learn"]
 import os
 
 import gavel.config.settings as settings
+from gavel_db.dialects.db.connection import with_session
 from gavel_db.dialects.db.parser import DBLogicParser
+from gavel_db.dialects.db.structures import Formula
 from gavel_learn.learn import train_masked
 import pickle
 import click
@@ -31,21 +33,53 @@ def learn():
 
 @click.command()
 @click.argument("path", default=None)
+@click.argument("batch", default=None, type=int)
 @click.option("--m", default=False)
-def learn_masked(path, m=False):
+def learn_masked(path, batch, m=False):
     def gen():
         with open(path,"rb") as f:
             while True:
                 yield pickle.load(f)
+
+    learn_memory(gen,m, batch)
+
+@click.command()
+@click.argument("batch", default=None, type=int)
+@click.option("--m", default=False)
+def learn_masked_db(batch, m=False):
+    @with_session
+    def gen(session):
+        p = DBLogicParser()
+        for dbf in session.query(Formula.json).yield_per(10):
+            yield p._parse_rec(dbf[0])
+
+    learn_memory(gen, m, batch)
+
+
+def _batchify(g, batch_size):
+    def inner():
+        batch = []
+        for x in g():
+            batch.append(x)
+            if len(batch) >= batch_size:
+                yield batch
+                batch = []
+        if batch:
+            yield batch
+    return inner
+
+
+def learn_memory(gen, m, b):
+    g = _batchify(gen, b)
     if m:
-        _cache = list(gen())
+        _cache = list(g())
 
         def g2():
             return _cache
         return train_masked(g2)
     else:
-        train_masked(gen)
-    print("Done:", path)
+        train_masked(g)
 
 
 learn.add_command(learn_masked)
+learn.add_command(learn_masked_db)
