@@ -74,7 +74,9 @@ setup(
     install_requires=[
         'gavel-db',
         'torch',
-        'pandas'
+        'pandas',
+        'matplotlib',
+        'numpy'
     ],
     extras_require={
         # eg:

@@ -3,7 +3,8 @@ from gavel.logic import logic as fol
 from gavel.logic import problem
 from gavel.dialects.base.compiler import Compiler
 from gavel_learn.simplifier import MapExtractor, MaskCompiler, MaskedElement
-
+import numpy as np
+from matplotlib import pyplot as plt
 
 class FormulaNet(torch.nn.Module, Compiler):
 
@@ -141,10 +142,11 @@ def train_masked(gen):
     mc = MaskCompiler()
     optimizer = torch.optim.Adam(net.parameters())
     loss = torch.nn.MSELoss()
-    running_loss = 0.0
+    learning_curve = []
     for epoch in range(10):
         print("Epoch", epoch)
-
+        i = 0
+        batch_loss = 0
         for batch in gen():
             labels = []
             predictions = []
@@ -169,7 +171,11 @@ def train_masked(gen):
                     predictions.append(net.forward(formula))
             l = loss(torch.stack(predictions), torch.stack(labels))
             l.backward()
+            batch_loss += l.item()
             optimizer.step()
-            print(f"loss {l.item()}")
+            print(f"Step {i}: loss {l.item()}")
+        learning_curve.append(batch_loss)
+    plt.plot(np.array(learning_curve), 'r')
+    plt.savefig("curve.png")
     torch.save(net.state_dict(), "mask_encoder.state")
     print('Finished Training')
