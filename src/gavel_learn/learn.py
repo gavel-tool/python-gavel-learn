@@ -3,11 +3,7 @@ from gavel.logic import logic as fol
 from gavel.logic import problem
 from gavel.dialects.base.compiler import Compiler
 from gavel_learn.simplifier import MapExtractor, MaskCompiler, MaskedElement
-from gavel_db.dialects.db.connection import with_session
-from gavel_db.dialects.db.structures import Formula
-from gavel_db.dialects.db.parser import DBLogicParser
-from gavel_db.dialects.db.compiler import JSONCompiler
-import pandas as pd
+
 
 class FormulaNet(torch.nn.Module, Compiler):
 
@@ -18,6 +14,7 @@ class FormulaNet(torch.nn.Module, Compiler):
         self.length = 50
         self.argument_limit = 5
         self.unary_formula = torch.nn.Linear(self.length, self.length)
+        self.final = torch.nn.Linear(self.length, self._leaf_factor*self.length)
         self.existential_quant = torch.nn.Linear(self.length, self.length)
         self.universal_quant = torch.nn.Linear(self.length, self.length)
         self.binary_formula = torch.nn.Linear(3*self.length, self.length)
@@ -31,7 +28,7 @@ class FormulaNet(torch.nn.Module, Compiler):
         self._variables_cache = None
 
     def forward(self, input: fol.LogicExpression):
-        return self.visit(input)
+        return self.final(self.visit(input))
 
     def prepare(self, p):
         maps = dict(
@@ -129,7 +126,7 @@ def train_masked(gen):
     for epoch in range(10):
         print("Epoch", epoch)
         i = 0
-        for f in gen(): #session.query(Formula.json).yield_per(100):
+        for f in gen():
             net.prepare(f)
             optimizer.zero_grad()
             lab = None
