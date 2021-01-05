@@ -37,9 +37,10 @@ def learn():
 @click.option("--m", default=False)
 def learn_masked(path, batch, m=False):
     def gen():
-        with open(path,"rb") as f:
-            while True:
-                yield pickle.load(f)
+        p = DBLogicParser()
+        with open(path,"r") as f:
+            for line in f.readlines():
+                yield p._parse_rec(line)
 
     learn_memory(gen,m, batch)
 
