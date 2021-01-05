@@ -22,7 +22,7 @@ from gavel_db.dialects.db.connection import with_session
 from gavel_db.dialects.db.parser import DBLogicParser
 from gavel_db.dialects.db.structures import Formula
 from gavel_learn.learn import train_masked
-import pickle
+import json
 import click
 
 
@@ -39,8 +39,8 @@ def learn_masked(path, batch, m=False):
     def gen():
         p = DBLogicParser()
         with open(path,"r") as f:
-            for line in f.readlines():
-                yield p._parse_rec(line)
+            for line in f:
+                yield p._parse_rec(json.loads(line))
 
     learn_memory(gen,m, batch)
 
