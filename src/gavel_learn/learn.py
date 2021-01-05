@@ -173,6 +173,7 @@ def train_masked(gen):
             l.backward()
             batch_loss += l.item()
             optimizer.step()
+            i += len(batch)
             print(f"Step {i}: loss {l.item()}")
         learning_curve.append(batch_loss)
     plt.plot(np.array(learning_curve), 'r')
