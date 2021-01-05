@@ -21,12 +21,31 @@ class FormulaNet(torch.nn.Module, Compiler):
         self.binary_formula = torch.nn.Linear(3*self.length, self.length)
         self.predicate_formula = torch.nn.Linear((1 + self.argument_limit) * self.length, self.length)
         self.functor_formula = torch.nn.Linear((1 + self.argument_limit) * self.length, self.length)
-        self.leaf_net = torch.nn.Linear(self._leaf_factor * self.length  + self._leaf_offset, self.length)
+        self.leaf_net = torch.nn.Linear(self._leaf_factor * self.length + self._leaf_offset, self.length)
+
+        self._constant_vectors = self._generate_encodings(0)
+        self._functor_vectors = self._generate_encodings(1)
+        self._predicate_vectors = self._generate_encodings(2)
+        self._binary_operator_vectors = self._generate_encodings(3)
+        self._variable_vectors = self._generate_encodings(4)
+
         self._constant_cache = None
         self._functor_cache = None
         self._predicate_cache = None
         self._binary_operator_cache = None
         self._variables_cache = None
+
+        self._null = torch.zeros(self.length).to(self.device)
+        self._masked = torch.zeros(self._leaf_factor * self.length + self._leaf_offset).to(self.device)
+
+    def _generate_encodings(self, index):
+        identifiers = torch.stack(
+            [torch.ones(self._leaf_factor * self.length + 1) if i == index else torch.zeros(self._leaf_factor * self.length + 1) for
+             i in range(self._leaf_offset)]).T
+        values = torch.eye(self._leaf_factor * self.length)
+        overflow = torch.zeros(self._leaf_factor * self.length)
+        values = torch.cat((values, torch.reshape(overflow,(1,-1))))
+        return torch.cat((identifiers,values), dim=1).to(self.device)
 
     def forward(self, input: fol.LogicExpression):
         return self.final(self.visit(input))
@@ -40,20 +59,16 @@ class FormulaNet(torch.nn.Module, Compiler):
             variables=set()
         )
         MapExtractor().visit(p,**maps)
-        self._constant_cache = dict(map(self.encode(0), enumerate(maps["constants"])))
-        self._functor_cache = dict(map(self.encode(1), enumerate(maps["functors"])))
-        self._predicate_cache = dict(map(self.encode(2), enumerate(maps["predicates"])))
-        self._binary_operator_cache = dict(map(self.encode(3), enumerate(fol.BinaryConnective)))
-        self._variables_cache = dict(map(self.encode(4), enumerate(maps["variables"])))
+        self._constant_cache = dict(map(self.encode(self._constant_vectors), enumerate(maps["constants"])))
+        self._functor_cache = dict(map(self.encode(self._functor_vectors), enumerate(maps["functors"])))
+        self._predicate_cache = dict(map(self.encode(self._predicate_vectors), enumerate(maps["predicates"])))
+        self._binary_operator_cache = dict(map(self.encode(self._binary_operator_vectors), enumerate(fol.BinaryConnective)))
+        self._variables_cache = dict(map(self.encode(self._variable_vectors), enumerate(maps["variables"])))
 
-    def encode(self, x):
+    def encode(self, v):
         def inner(y):
             i, o = y
-            v = torch.zeros(self._leaf_factor * self.length + self._leaf_offset).to(self.device)
-            if i < self._leaf_factor * self.length:
-                v[i + self._leaf_offset] = 1
-            v[x] = 1
-            return o, v
+            return o, v[min(i, self.length)]
         return inner
 
     def visit_unary_formula(self, formula: fol.UnaryFormula, **kwargs):
@@ -76,7 +91,7 @@ class FormulaNet(torch.nn.Module, Compiler):
         arguments += [self.visit(a, **kwargs) for a in expression.arguments[:min(len(expression.arguments), self.argument_limit)]]
         # Fill missing arguments with zeros
         for _ in range(len(arguments)+1, self.argument_limit+2):
-            arguments.append(torch.zeros(self.length).to(self.device))
+            arguments.append(self._null)
         return torch.relu(self.functor_formula(torch.cat(arguments, dim=-1)))
 
     def visit_predicate_expression(self, expression: fol.PredicateExpression, **kwargs):
@@ -84,7 +99,7 @@ class FormulaNet(torch.nn.Module, Compiler):
         arguments += [self.visit(a, **kwargs) for a in expression.arguments[:min(len(expression.arguments), self.argument_limit)]]
         # Fill missing arguments with zeros
         for _ in range(len(arguments)+1, self.argument_limit+2):
-            arguments.append(torch.zeros(self.length).to(self.device))
+            arguments.append(self._null)
         return torch.relu(self.predicate_formula(torch.cat(arguments, dim=-1)))
 
     def visit_variable(self, variable: fol.Variable, **kwargs):
@@ -106,7 +121,7 @@ class FormulaNet(torch.nn.Module, Compiler):
         return torch.relu(self.leaf_net(self._predicate_cache(predicate.value)))
 
     def visit_masked(self, masked: MaskedElement):
-        return torch.zeros(self.length).to(self.device)
+        return self._masked
 
 
 class PremiseSelector(torch.nn.Module):
