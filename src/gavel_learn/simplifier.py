@@ -88,6 +88,9 @@ class MaskCompiler(Compiler):
     def visit_defined_constant(self, constant: fol.DefinedConstant):
         return constant, constant
 
+    def visit_distinct_object(self, obj: fol.DistinctObject):
+        return obj, obj
+
     def visit_variable(self, variable: fol.Variable):
         return variable, None
 
