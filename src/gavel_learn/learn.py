@@ -163,6 +163,8 @@ def train_masked(gen):
                     label = net._constant_cache[lab.symbol]
                 elif isinstance(lab, fol.DefinedConstant):
                     label = net._constant_cache[lab.symbol]
+                elif isinstance(lab, fol.DistinctObject):
+                    label = net._constant_cache[lab.symbol]
                 elif isinstance(lab, tuple):
                     if lab[1] == "predicate":
                         label = net._predicate_cache[lab[0]]
