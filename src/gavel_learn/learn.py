@@ -147,6 +147,7 @@ def train_masked(gen):
         print("Epoch", epoch)
         i = 0
         batch_loss = 0
+        batchnumber = 0
         for batch in gen():
             labels = []
             predictions = []
@@ -180,8 +181,9 @@ def train_masked(gen):
             batch_loss += l.item()
             optimizer.step()
             i += len(batch)
+            batchnumber += 1
             print(f"Step {i}: loss {l.item()}")
-        learning_curve.append(batch_loss)
+        learning_curve.append(batch_loss/batchnumber)
     plt.plot(np.array(learning_curve), 'r')
     plt.savefig("curve.png")
     with open("curve.json", "w") as o:
