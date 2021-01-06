@@ -143,7 +143,7 @@ def train_masked(gen):
     optimizer = torch.optim.Adam(net.parameters())
     loss = torch.nn.MSELoss()
     learning_curve = []
-    for epoch in range(10):
+    for epoch in range(100):
         print("Epoch", epoch)
         i = 0
         batch_loss = 0
