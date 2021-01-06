@@ -153,7 +153,11 @@ def train_masked(gen):
             optimizer.zero_grad()
             for f in batch:
                 net.prepare(f)
-                formula, lab = mc.visit(f)
+                x = mc.visit(f)
+                if len(x) != 2:
+                    print(f"Could not process {f}. Compiler returned {x}")
+                    continue
+                formula, lab = x
                 label = None
                 if isinstance(lab, fol.Constant):
                     label = net._constant_cache[lab.symbol]
