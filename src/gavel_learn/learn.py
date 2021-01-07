@@ -153,14 +153,14 @@ class PremiseSelector(torch.nn.Module):
         context = torch.sum(torch.mul(premise_stack, ratings), dim=0, keepdim=True)
         thought = torch.cat((thought, context))
         o, hidden = self.decoder.forward(thought)
-        return self.final(o[-1]).squeeze(-1), hidden
+        return torch.sigmoid(self.final(o[-1])).squeeze(-1), hidden
 
     def forward(self, premises, conjectures):
         self.formula_net.prepare(premises, conjectures)
         premise_stack = torch.stack([self.formula_net.forward(p) for p in premises]).unsqueeze(1)
         num_prem = premise_stack.size()[0]
         hidden = premise_stack[-1]
-        conj = self.conjecture_squash.forward((torch.stack([self.formula_net.forward(c) for c in conjectures]).unsqueeze(1)))[0].expand(num_prem,1,self.formula_net.output_size)
+        conj = torch.relu(self.conjecture_squash.forward((torch.stack([self.formula_net.forward(c) for c in conjectures]).unsqueeze(1)))[0].expand(num_prem,1,self.formula_net.output_size))
         thought = torch.empty(1, 1, self.formula_net.output_size).to(self.device)
         output = []
         for i in range(num_prem):
