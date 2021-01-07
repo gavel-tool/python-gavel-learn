@@ -7,10 +7,10 @@ import numpy as np
 from matplotlib import pyplot as plt
 from itertools import chain
 
-if torch.cuda.is_available():
-    DEVICE = torch.device("cuda:0")
-else:
-    DEVICE = torch.device("cpu:0")
+# if torch.cuda.is_available():
+#     DEVICE = torch.device("cuda:0")
+# else:
+DEVICE = torch.device("cpu:0")
 
 class FormulaNet(torch.nn.Module, Compiler):
 
@@ -145,6 +145,8 @@ class PremiseSelector(torch.nn.Module):
         self.softmax = torch.nn.Softmax(-1)
         self.decoder = torch.nn.GRU(self.formula_net.output_size, self.formula_net.output_size)
         self.final = torch.nn.Linear(self.formula_net.output_size, 1)
+        self.device = self.formula_net.device
+        self.to(self.formula_net.device)
 
     def attention_loop(self, premise_stack, hidden, conj, thought):
         ratings = self.softmax(self.scoring(torch.cat((premise_stack, conj, hidden), dim=-1)))
@@ -159,13 +161,13 @@ class PremiseSelector(torch.nn.Module):
         num_prem = premise_stack.size()[0]
         hidden = premise_stack[-1]
         conj = self.conjecture_squash.forward((torch.stack([self.formula_net.forward(c) for c in conjectures]).unsqueeze(1)))[0].expand(num_prem,1,self.formula_net.output_size)
-        thought = torch.empty(1, 1, self.formula_net.output_size)
+        thought = torch.empty(1, 1, self.formula_net.output_size).to(self.device)
         output = []
         for i in range(num_prem):
             hidden = hidden.expand(num_prem, 1, self.formula_net.output_size)
             o, hidden = self.attention_loop(premise_stack, hidden, conj, thought)
             output.append(o)
-        return torch.cat(output)
+        return torch.cat(output).to(self.device)
 
 def train_selection(gen):
     net = PremiseSelector()
@@ -179,7 +181,7 @@ def train_selection(gen):
         for data, labels in gen():
             optimizer.zero_grad()
             predictions = torch.stack([net.forward(premises, conjectures) for premises, conjectures in data])
-            l = loss(predictions, torch.tensor(labels))
+            l = loss(predictions, torch.tensor(labels).to(net.device))
             l.backward()
             batch_loss += l.item()
             optimizer.step()
