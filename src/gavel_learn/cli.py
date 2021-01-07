@@ -19,9 +19,10 @@ import os
 
 import gavel.config.settings as settings
 from gavel_db.dialects.db.connection import with_session
-from gavel_db.dialects.db.parser import DBLogicParser
+from gavel_db.dialects.db.parser import DBLogicParser, DBProblemParser
 from gavel_db.dialects.db.structures import Formula
-from gavel_learn.learn import train_masked
+from gavel_db.dialects.db import structures
+from gavel_learn.learn import train_masked, train_selection
 import json
 import click
 
@@ -57,16 +58,37 @@ def learn_masked_db(batch, m=False):
     learn_memory(gen, m, batch)
 
 
+@click.command()
+@click.argument("batch", default=None, type=int)
+@click.option("--m", default=False)
+def learn_selection_db(batch, m=False):
+    @with_session
+    def gen(session):
+        parser = DBLogicParser()
+        for solution, db_problem in session.query(structures.Solution, structures.Problem).yield_per(1):
+            premises = []
+            used = []
+            for prem in db_problem.all_premises(session):
+                premises.append(parser._parse_rec(prem.json))
+                used.append(1.0 if prem in solution.premises else 0.0)
+            conjectures = [parser._parse_rec(c.json) for c in db_problem.conjectures]
+            yield (premises, conjectures), used
+    learn_memory(gen, m, batch)
+
+
 def _batchify(g, batch_size):
     def inner():
-        batch = []
-        for x in g():
-            batch.append(x)
-            if len(batch) >= batch_size:
-                yield batch
-                batch = []
-        if batch:
-            yield batch
+        data_batch = []
+        label_batch = []
+        for x, y in g():
+            data_batch.append(x)
+            label_batch.append(y)
+            if len(data_batch) >= batch_size:
+                yield data_batch, label_batch
+                data_batch = []
+                label_batch = []
+        if data_batch:
+            yield data_batch, label_batch
     return inner
 
 
@@ -77,10 +99,11 @@ def learn_memory(gen, m, b):
 
         def g2():
             return _cache
-        return train_masked(g2)
+        return train_selection(g2)
     else:
-        train_masked(g)
+        return train_selection(g)
 
 
 learn.add_command(learn_masked)
 learn.add_command(learn_masked_db)
+learn.add_command(learn_selection_db)

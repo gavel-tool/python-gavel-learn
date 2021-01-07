@@ -5,18 +5,25 @@ from gavel.dialects.base.compiler import Compiler
 from gavel_learn.simplifier import MapExtractor, MaskCompiler, MaskedElement
 import numpy as np
 from matplotlib import pyplot as plt
+from itertools import chain
+
+if torch.cuda.is_available():
+    DEVICE = torch.device("cuda:0")
+else:
+    DEVICE = torch.device("cpu:0")
 
 class FormulaNet(torch.nn.Module, Compiler):
 
-    def __init__(self, device):
+    def __init__(self, device=DEVICE):
         super().__init__()
         self.device = device
         self._leaf_factor = 5
         self._leaf_offset = 5
         self.length = 50
         self.argument_limit = 5
+        self.output_size = self._leaf_factor*self.length + self._leaf_offset
         self.unary_formula = torch.nn.Linear(self.length, self.length)
-        self.final = torch.nn.Linear(self.length, self._leaf_factor*self.length + self._leaf_offset)
+        self.final = torch.nn.Linear(self.length, self.output_size)
         self.existential_quant = torch.nn.Linear(self.length, self.length)
         self.universal_quant = torch.nn.Linear(self.length, self.length)
         self.binary_formula = torch.nn.Linear(3*self.length, self.length)
@@ -51,7 +58,7 @@ class FormulaNet(torch.nn.Module, Compiler):
     def forward(self, input: fol.LogicExpression):
         return self.final(self.visit(input))
 
-    def prepare(self, p):
+    def prepare(self, premises, conjectures):
         maps = dict(
             predicates=set(),
             constants=set(),
@@ -59,12 +66,13 @@ class FormulaNet(torch.nn.Module, Compiler):
             binary_operators=set(),
             variables=set()
         )
-        MapExtractor().visit(p,**maps)
-        self._constant_cache = dict(map(self.encode(self._constant_vectors), enumerate(maps["constants"])))
-        self._functor_cache = dict(map(self.encode(self._functor_vectors), enumerate(maps["functors"])))
-        self._predicate_cache = dict(map(self.encode(self._predicate_vectors), enumerate(maps["predicates"])))
-        self._binary_operator_cache = dict(map(self.encode(self._binary_operator_vectors), enumerate(fol.BinaryConnective)))
-        self._variables_cache = dict(map(self.encode(self._variable_vectors), enumerate(maps["variables"])))
+        for p in chain(premises, conjectures):
+            MapExtractor().visit(p,**maps)
+            self._constant_cache = dict(map(self.encode(self._constant_vectors), enumerate(maps["constants"])))
+            self._functor_cache = dict(map(self.encode(self._functor_vectors), enumerate(maps["functors"])))
+            self._predicate_cache = dict(map(self.encode(self._predicate_vectors), enumerate(maps["predicates"])))
+            self._binary_operator_cache = dict(map(self.encode(self._binary_operator_vectors), enumerate(fol.BinaryConnective)))
+            self._variables_cache = dict(map(self.encode(self._variable_vectors), enumerate(maps["variables"])))
 
     def encode(self, v):
         def inner(y):
@@ -129,16 +137,67 @@ class PremiseSelector(torch.nn.Module):
 
     def __init__(self):
         super().__init__()
+        self.formula_net = FormulaNet()
+        self.formula_net.to(self.formula_net.device)
+        self.encoder = torch.nn.GRU(self.formula_net.output_size, self.formula_net.output_size)
+        self.conjecture_squash = torch.nn.GRU(self.formula_net.output_size, self.formula_net.output_size)
+        self.scoring = torch.nn.Linear(self.formula_net.output_size*3, self.formula_net.output_size)
+        self.softmax = torch.nn.Softmax(-1)
+        self.decoder = torch.nn.GRU(self.formula_net.output_size, self.formula_net.output_size)
+        self.final = torch.nn.Linear(self.formula_net.output_size, 1)
+
+    def attention_loop(self, premise_stack, hidden, conj, thought):
+        ratings = self.softmax(self.scoring(torch.cat((premise_stack, conj, hidden), dim=-1)))
+        context = torch.sum(torch.mul(premise_stack, ratings), dim=0, keepdim=True)
+        thought = torch.cat((thought, context))
+        o, hidden = self.decoder.forward(thought)
+        return self.final(o[-1]).squeeze(-1), hidden
+
+    def forward(self, premises, conjectures):
+        self.formula_net.prepare(premises, conjectures)
+        premise_stack = torch.stack([self.formula_net.forward(p) for p in premises]).unsqueeze(1)
+        num_prem = premise_stack.size()[0]
+        hidden = premise_stack[-1]
+        conj = self.conjecture_squash.forward((torch.stack([self.formula_net.forward(c) for c in conjectures]).unsqueeze(1)))[0].expand(num_prem,1,self.formula_net.output_size)
+        thought = torch.empty(1, 1, self.formula_net.output_size)
+        output = []
+        for i in range(num_prem):
+            hidden = hidden.expand(num_prem, 1, self.formula_net.output_size)
+            o, hidden = self.attention_loop(premise_stack, hidden, conj, thought)
+            output.append(o)
+        return torch.cat(output)
+
+def train_selection(gen):
+    net = PremiseSelector()
+    optimizer = torch.optim.Adam(net.parameters())
+    loss = torch.nn.MSELoss()
+    learning_curve = []
+    for epoch in range(100):
+        i = 0
+        batch_loss = 0
+        batchnumber = 0
+        for data, labels in gen():
+            optimizer.zero_grad()
+            predictions = torch.stack([net.forward(premises, conjectures) for premises, conjectures in data])
+            l = loss(predictions, torch.tensor(labels))
+            l.backward()
+            batch_loss += l.item()
+            optimizer.step()
+            i += len(data)
+            batchnumber += 1
+            print(f"Step {i}: loss {l.item()}")
+        learning_curve.append(batch_loss / batchnumber)
+    plt.plot(np.array(learning_curve), 'r')
+    plt.savefig("curve.png")
+    with open("curve.json", "w") as o:
+        o.write(str(learning_curve))
+    torch.save(net.state_dict(), "mask_encoder.state")
+    print('Finished Training')
 
 
 def train_masked(gen):
-
-    if torch.cuda.is_available():
-        device = torch.device("cuda:0")
-    else:
-        device = torch.device("cpu:0")
-    net = FormulaNet(device=device)
-    net.to(device)
+    net = FormulaNet()
+    net.to(net.device)
     mc = MaskCompiler()
     optimizer = torch.optim.Adam(net.parameters())
     loss = torch.nn.MSELoss()
