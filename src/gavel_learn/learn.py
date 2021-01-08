@@ -174,7 +174,7 @@ def train_selection(gen):
     optimizer = torch.optim.Adam(net.parameters())
     loss = torch.nn.MSELoss()
     learning_curve = []
-    for epoch in range(100):
+    for epoch in range(10):
         print("Epoch", epoch)
         i = 0
         batch_loss = 0
