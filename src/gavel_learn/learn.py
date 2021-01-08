@@ -17,7 +17,7 @@ class FormulaNet(torch.nn.Module, Compiler):
     def __init__(self, device=DEVICE):
         super().__init__()
         self.device = device
-        self._leaf_factor = 5
+        self._leaf_factor = 1
         self._leaf_offset = 5
         self.length = 50
         self.argument_limit = 5
@@ -133,6 +133,18 @@ class FormulaNet(torch.nn.Module, Compiler):
         return self._masked
 
 
+class Residual(torch.nn.Module):
+    def __init__(self, sublayer: torch.nn.Module, dimension: int, dropout: float = 0.1):
+        super().__init__()
+        self.sublayer = sublayer
+        self.norm = torch.nn.LayerNorm(dimension)
+        self.dropout = torch.nn.Dropout(dropout)
+
+    def forward(self, *tensors: torch.Tensor) -> torch.Tensor:
+        # Assume that the "value" tensor is given last, so we can compute the
+        # residual.  This matches the signature of 'MultiHeadAttention'.
+        return self.norm(tensors[-1] + self.dropout(self.sublayer(*tensors)))
+
 class PremiseSelector(torch.nn.Module):
 
     def __init__(self):
@@ -169,16 +181,42 @@ class PremiseSelector(torch.nn.Module):
             output.append(o)
         return torch.cat(output).to(self.device)
 
+
+class PremiseSelectorGRU(torch.nn.Module):
+
+    def __init__(self):
+        super().__init__()
+
+        self.formula_net = FormulaNet()
+        self.formula_net.to(self.formula_net.device)
+        self.device = self.formula_net.device
+        self.conjecture_squash = torch.nn.GRU(self.formula_net.output_size, self.formula_net.output_size)
+        self.gru = torch.nn.GRU(self.formula_net.output_size*2, self.formula_net.output_size, bidirectional=True)
+        self.final = torch.nn.Linear(self.formula_net.output_size * 2, 1)
+
+    def forward(self, premises, conjectures):
+        self.formula_net.prepare(premises, conjectures)
+        premise_stack = torch.stack([self.formula_net.forward(p) for p in premises]).unsqueeze(1)
+        num_prem = premise_stack.size()[0]
+        print(num_prem)
+        conj = torch.relu(self.conjecture_squash.forward((torch.stack([self.formula_net.forward(c) for c in conjectures]).unsqueeze(1)))[0].expand(num_prem,1,self.formula_net.output_size))
+        o, h = self.gru(torch.cat((premise_stack, conj), dim=-1))
+        return self.final(o)
+
+
 def train_selection(gen):
-    net = PremiseSelector()
+    net = PremiseSelectorGRU()
     optimizer = torch.optim.Adam(net.parameters())
     loss = torch.nn.MSELoss()
     learning_curve = []
     for epoch in range(100):
+        print("Epoch", epoch)
         i = 0
         batch_loss = 0
         batchnumber = 0
         for data, labels in gen():
+            batchnumber += 1
+            print("Process batch", batchnumber)
             optimizer.zero_grad()
             predictions = torch.stack([net.forward(premises, conjectures) for premises, conjectures in data])
             l = loss(predictions, torch.tensor(labels).to(net.device))
@@ -186,7 +224,6 @@ def train_selection(gen):
             batch_loss += l.item()
             optimizer.step()
             i += len(data)
-            batchnumber += 1
             print(f"Step {i}: loss {l.item()}")
         learning_curve.append(batch_loss / batchnumber)
     plt.plot(np.array(learning_curve), 'r')
