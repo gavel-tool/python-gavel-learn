@@ -79,26 +79,26 @@ def learn_selection_db(batch, m=False):
 
 
 @click.command()
+@click.argument("path", default=None)
 @click.argument("batch", default=None, type=int)
 @click.option("--m", default=False)
-def learn_selection(batch, m=False):
-    @with_session
-    def gen(session):
+def learn_selection(path, batch, m=False):
+    def gen():
         lparser= TPTPParser()
         pparser = TPTPProblemParser()
-        for solution in session.query(structures.Solution).yield_per(1):
-            problem = pparser.parse_from_file(solution.problem.source.path.replace("/data/TPTP", settings.TPTP_ROOT))
-            premises = problem.premises
-            for imp in problem.imports:
-                for p in lparser.parse_from_file(os.path.join(settings.TPTP_ROOT, imp.path)):
-                    premises.append(p)
-            used = []
-            used_premises = [p.name for p in solution.premises]
-            for prem in premises:
-                used.append(1.0 if prem.name in used_premises else 0.0)
-            conjectures = problem.conjectures
-            if premises:
-                yield (premises, conjectures), used
+        with open(path, "r") as f:
+            for row in json.load(f):
+                problem = pparser.parse_from_file(row["path"])
+                premises = problem.premises
+                for imp in problem.imports:
+                    for p in lparser.parse_from_file(os.path.join(settings.TPTP_ROOT, imp.path)):
+                        premises.append(p)
+                used = []
+                for prem in premises:
+                    used.append(1.0 if prem.name in row["used"] else 0.0)
+                conjectures = problem.conjectures
+                if premises:
+                    yield (premises, conjectures), used
     learn_memory(gen, m, batch)
 
 
