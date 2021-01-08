@@ -65,13 +65,13 @@ def learn_selection_db(batch, m=False):
     @with_session
     def gen(session):
         parser = DBLogicParser()
-        for solution, db_problem in session.query(structures.Solution, structures.Problem).yield_per(1):
+        for solution in session.query(structures.Solution).yield_per(1):
             premises = []
             used = []
-            for prem in db_problem.all_premises(session):
+            for prem in solution.problem.all_premises(session):
                 premises.append(parser._parse_rec(prem.json))
                 used.append(1.0 if prem in solution.premises else 0.0)
-            conjectures = [parser._parse_rec(c.json) for c in db_problem.conjectures]
+            conjectures = [parser._parse_rec(c.json) for c in solution.problem.conjectures]
             yield (premises, conjectures), used
     learn_memory(gen, m, batch)
 
