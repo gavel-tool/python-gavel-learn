@@ -23,6 +23,7 @@ from gavel_db.dialects.db.parser import DBLogicParser, DBProblemParser
 from gavel_db.dialects.db.structures import Formula
 from gavel_db.dialects.db import structures
 from gavel_learn.learn import train_masked, train_selection
+from gavel_learn.simplifier import MapExtractor
 from gavel.dialects.tptp.parser import TPTPProblemParser, TPTPParser
 import json
 import click
@@ -83,11 +84,13 @@ def learn_selection_db(batch, m=False):
 @click.argument("batch", default=None, type=int)
 @click.option("--m", default=False)
 def learn_selection(path, batch, m=False):
+
     def gen():
         lparser= TPTPParser()
         pparser = TPTPProblemParser()
         with open(path, "r") as f:
             for row in json.load(f):
+                me = MapExtractor()
                 problem = pparser.parse_from_file(os.path.join(settings.TPTP_ROOT,row["path"]))
                 premises = problem.premises
                 for imp in problem.imports:
@@ -96,9 +99,10 @@ def learn_selection(path, batch, m=False):
                 used = []
                 for prem in premises:
                     used.append(1.0 if prem.name in row["used"] else 0.0)
-                conjectures = problem.conjectures
-                if premises:
-                    yield (premises, conjectures), used
+                mapped_premises = [me.visit(prem) for prem in premises]
+                conjectures = [me.visit(c) for c in problem.conjectures]
+                if mapped_premises:
+                    yield (mapped_premises, conjectures), used
     learn_memory(gen, m, batch)
 
 

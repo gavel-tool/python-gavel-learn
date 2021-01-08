@@ -2,7 +2,7 @@ import torch
 from gavel.logic import logic as fol
 from gavel.logic import problem
 from gavel.dialects.base.compiler import Compiler
-from gavel_learn.simplifier import MapExtractor, MaskCompiler, MaskedElement
+from gavel_learn.simplifier import MapExtractor, MaskCompiler, MaskedElement, EncodedElement
 import numpy as np
 from matplotlib import pyplot as plt
 from itertools import chain
@@ -17,7 +17,7 @@ class FormulaNet(torch.nn.Module, Compiler):
     def __init__(self, device=DEVICE):
         super().__init__()
         self.device = device
-        self._leaf_factor = 1
+        self._leaf_factor = 3
         self._leaf_offset = 5
         self.length = 50
         self.argument_limit = 5
@@ -31,17 +31,12 @@ class FormulaNet(torch.nn.Module, Compiler):
         self.functor_formula = torch.nn.Linear((1 + self.argument_limit) * self.length, self.length)
         self.leaf_net = torch.nn.Linear(self._leaf_factor * self.length + self._leaf_offset, self.length)
 
-        self._constant_vectors = self._generate_encodings(0)
-        self._functor_vectors = self._generate_encodings(1)
-        self._predicate_vectors = self._generate_encodings(2)
-        self._binary_operator_vectors = self._generate_encodings(3)
-        self._variable_vectors = self._generate_encodings(4)
-
-        self._constant_cache = None
-        self._functor_cache = None
-        self._predicate_cache = None
-        self._binary_operator_cache = None
-        self._variables_cache = None
+        self.embeddings = dict(
+            constants=self._generate_encodings(0),
+            functors = self._generate_encodings(1),
+            predicates = self._generate_encodings(2),
+            binary_operators = self._generate_encodings(3),
+            variables = self._generate_encodings(4))
 
         self._null = torch.zeros(self.length).to(self.device)
         self._masked = torch.zeros(self._leaf_factor * self.length + self._leaf_offset).to(self.device)
@@ -55,30 +50,11 @@ class FormulaNet(torch.nn.Module, Compiler):
         values = torch.cat((values, torch.reshape(overflow,(1,-1))))
         return torch.cat((identifiers,values), dim=1).to(self.device)
 
+    def visit_encoded_element(self, elem:EncodedElement):
+        return torch.relu(self.leaf_net(self.embeddings[elem.kind][elem.value]))
+
     def forward(self, input: fol.LogicExpression):
         return self.final(self.visit(input))
-
-    def prepare(self, premises, conjectures):
-        maps = dict(
-            predicates=set(),
-            constants=set(),
-            functors=set(),
-            binary_operators=set(),
-            variables=set()
-        )
-        for p in chain(premises, conjectures):
-            MapExtractor().visit(p,**maps)
-            self._constant_cache = dict(map(self.encode(self._constant_vectors), enumerate(maps["constants"])))
-            self._functor_cache = dict(map(self.encode(self._functor_vectors), enumerate(maps["functors"])))
-            self._predicate_cache = dict(map(self.encode(self._predicate_vectors), enumerate(maps["predicates"])))
-            self._binary_operator_cache = dict(map(self.encode(self._binary_operator_vectors), enumerate(fol.BinaryConnective)))
-            self._variables_cache = dict(map(self.encode(self._variable_vectors), enumerate(maps["variables"])))
-
-    def encode(self, v):
-        def inner(y):
-            i, o = y
-            return o, v[min(i, self.length)]
-        return inner
 
     def visit_unary_formula(self, formula: fol.UnaryFormula, **kwargs):
         return torch.relu(self.unary_formula(self.visit(formula.formula, **kwargs)))
@@ -96,7 +72,7 @@ class FormulaNet(torch.nn.Module, Compiler):
         return torch.relu(self.binary_formula(torch.cat([self.visit(formula.left),self.visit(formula.operator), self.visit(formula.right)], dim=-1)))
 
     def visit_functor_expression(self, expression: fol.FunctorExpression, **kwargs):
-        arguments = [self.leaf_net(self._functor_cache[expression.functor])]
+        arguments = [self.visit(expression.functor)]
         arguments += [self.visit(a, **kwargs) for a in expression.arguments[:min(len(expression.arguments), self.argument_limit)]]
         # Fill missing arguments with zeros
         for _ in range(len(arguments)+1, self.argument_limit+2):
@@ -104,30 +80,12 @@ class FormulaNet(torch.nn.Module, Compiler):
         return torch.relu(self.functor_formula(torch.cat(arguments, dim=-1)))
 
     def visit_predicate_expression(self, expression: fol.PredicateExpression, **kwargs):
-        arguments = [self.leaf_net(self._predicate_cache[expression.predicate])]
+        arguments = [self.visit(expression.predicate)]
         arguments += [self.visit(a, **kwargs) for a in expression.arguments[:min(len(expression.arguments), self.argument_limit)]]
         # Fill missing arguments with zeros
         for _ in range(len(arguments)+1, self.argument_limit+2):
             arguments.append(self._null)
         return torch.relu(self.predicate_formula(torch.cat(arguments, dim=-1)))
-
-    def visit_variable(self, variable: fol.Variable, **kwargs):
-        return torch.relu(self.leaf_net(self._variables_cache[variable.symbol]))
-
-    def visit_constant(self, obj: fol.Constant, **kwargs):
-        return torch.relu(self.leaf_net(self._constant_cache[obj.symbol]))
-
-    def visit_distinct_object(self, obj: fol.DistinctObject, **kwargs):
-        return torch.relu(self.leaf_net(self._constant_cache[obj.symbol]))
-
-    def visit_defined_constant(self, obj: fol.DefinedConstant, **kwargs):
-        return torch.relu(self.leaf_net(self._constant_cache[obj.value]))
-
-    def visit_binary_connective(self, connective: fol.BinaryConnective):
-        return torch.relu(self.leaf_net(self._binary_operator_cache[connective]))
-
-    def visit_defined_predicate(self, predicate: fol.DefinedPredicate, **kwargs):
-        return torch.relu(self.leaf_net(self._predicate_cache(predicate.value)))
 
     def visit_masked(self, masked: MaskedElement):
         return self._masked
@@ -194,14 +152,17 @@ class PremiseSelectorGRU(torch.nn.Module):
         self.gru = torch.nn.GRU(self.formula_net.output_size*2, self.formula_net.output_size, bidirectional=True)
         self.final = torch.nn.Linear(self.formula_net.output_size * 2, 1)
 
-    def forward(self, premises, conjectures):
-        self.formula_net.prepare(premises, conjectures)
-        premise_stack = torch.stack([self.formula_net.forward(p) for p in premises]).unsqueeze(1)
+    def forward(self, data):
+        premise_stack = torch.nn.utils.rnn.pad_sequence([torch.stack([self.formula_net.forward(p) for p in batch[0]]) for batch in data])
+        conjecture_stack = torch.nn.utils.rnn.pad_sequence(
+            [torch.stack([self.formula_net.forward(c) for c in batch[1]]) for batch in
+             data])
         num_prem = premise_stack.size()[0]
+        batches = premise_stack.size()[1]
         print(num_prem)
-        conj = torch.relu(self.conjecture_squash.forward((torch.stack([self.formula_net.forward(c) for c in conjectures]).unsqueeze(1)))[0].expand(num_prem,1,self.formula_net.output_size))
+        conj = torch.relu(self.conjecture_squash.forward(conjecture_stack)[0].expand(num_prem,batches,self.formula_net.output_size))
         o, h = self.gru(torch.cat((premise_stack, conj), dim=-1))
-        return self.final(o)
+        return self.final(o).squeeze(-1)
 
 
 def train_selection(gen):
@@ -218,8 +179,9 @@ def train_selection(gen):
             batchnumber += 1
             print("Process batch", batchnumber)
             optimizer.zero_grad()
-            predictions = torch.stack([net.forward(premises, conjectures) for premises, conjectures in data])
-            l = loss(predictions, torch.tensor(labels).to(net.device))
+            predictions = net.forward(data)
+            ls = torch.nn.utils.rnn.pad_sequence([torch.tensor(l) for l in labels]).to(net.device)
+            l = loss(predictions, ls)
             l.backward()
             batch_loss += l.item()
             optimizer.step()
