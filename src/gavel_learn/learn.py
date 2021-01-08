@@ -21,6 +21,7 @@ class FormulaNet(torch.nn.Module, Compiler):
         self._leaf_offset = 5
         self.length = 50
         self.argument_limit = 5
+        self.max_embeddings = 100
         self.output_size = self._leaf_factor*self.length + self._leaf_offset
         self.unary_formula = torch.nn.Linear(self.length, self.length)
         self.final = torch.nn.Linear(self.length, self.output_size)
@@ -32,26 +33,29 @@ class FormulaNet(torch.nn.Module, Compiler):
         self.leaf_net = torch.nn.Linear(self._leaf_factor * self.length + self._leaf_offset, self.length)
 
         self.embeddings = dict(
-            constants=self._generate_encodings(0),
-            functors = self._generate_encodings(1),
-            predicates = self._generate_encodings(2),
-            binary_operators = self._generate_encodings(3),
-            variables = self._generate_encodings(4))
+            constants=torch.nn.Embedding(self.max_embeddings, self.length),
+            functors = torch.nn.Embedding(self.max_embeddings, self.length),
+            predicates = torch.nn.Embedding(self.max_embeddings, self.length),
+            binary_operators = torch.nn.Embedding(self.max_embeddings, self.length),
+            variables = torch.nn.Embedding(self.max_embeddings, self.length))
 
-        self._null = torch.zeros(self.length).to(self.device)
+        self._null = torch.autograd.Variable(torch.randn(self.length)).to(self.device)
         self._masked = torch.zeros(self._leaf_factor * self.length + self._leaf_offset).to(self.device)
 
-    def _generate_encodings(self, index):
+    """def _generate_encodings(self, index):
         identifiers = torch.stack(
             [torch.ones(self._leaf_factor * self.length + 1) if i == index else torch.zeros(self._leaf_factor * self.length + 1) for
              i in range(self._leaf_offset)]).T
         values = torch.eye(self._leaf_factor * self.length)
         overflow = torch.zeros(self._leaf_factor * self.length)
         values = torch.cat((values, torch.reshape(overflow,(1,-1))))
-        return torch.cat((identifiers,values), dim=1).to(self.device)
+        return torch.cat((identifiers,values), dim=1).to(self.device)"""
 
     def visit_encoded_element(self, elem:EncodedElement):
-        return torch.relu(self.leaf_net(self.embeddings[elem.kind][elem.value]))
+        if elem.value < self.max_embeddings:
+            return self.embeddings[elem.kind](torch.tensor([elem.value])).squeeze(0)
+        else:
+            return self._null
 
     def forward(self, input: fol.LogicExpression):
         return self.final(self.visit(input))
