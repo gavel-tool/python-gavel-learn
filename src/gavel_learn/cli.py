@@ -88,7 +88,7 @@ def learn_selection(path, batch, m=False):
         pparser = TPTPProblemParser()
         with open(path, "r") as f:
             for row in json.load(f):
-                problem = pparser.parse_from_file(row["path"])
+                problem = pparser.parse_from_file(os.path.join(settings.TPTP_ROOT,row["path"]))
                 premises = problem.premises
                 for imp in problem.imports:
                     for p in lparser.parse_from_file(os.path.join(settings.TPTP_ROOT, imp.path)):
