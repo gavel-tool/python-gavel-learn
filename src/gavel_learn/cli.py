@@ -72,7 +72,8 @@ def learn_selection_db(batch, m=False):
                 premises.append(parser._parse_rec(prem.json))
                 used.append(1.0 if prem in solution.premises else 0.0)
             conjectures = [parser._parse_rec(c.json) for c in solution.problem.conjectures]
-            yield (premises, conjectures), used
+            if premises:
+                yield (premises, conjectures), used
     learn_memory(gen, m, batch)
 
 
