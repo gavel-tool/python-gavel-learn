@@ -163,7 +163,7 @@ class PremiseSelectorGRU(torch.nn.Module):
         num_prem = premise_stack.size()[0]
         batches = premise_stack.size()[1]
         print(num_prem)
-        conj = torch.relu(self.conjecture_squash.forward(conjecture_stack)[0].expand(num_prem,batches,self.formula_net.output_size))
+        conj = torch.relu(self.conjecture_squash.forward(conjecture_stack)[0][-1].expand(num_prem,batches,self.formula_net.output_size))
         o, h = self.gru(torch.cat((premise_stack, conj), dim=-1))
         return self.final(o).squeeze(-1)
 
