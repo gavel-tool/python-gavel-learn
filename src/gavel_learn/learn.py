@@ -120,7 +120,6 @@ class PremiseSelector(torch.nn.Module):
         self.decoder = torch.nn.GRU(self.formula_net.output_size, self.formula_net.output_size)
         self.final = torch.nn.Linear(self.formula_net.output_size, 1)
         self.device = self.formula_net.device
-        self.to(self.formula_net.device)
 
     def attention_loop(self, premise_stack, hidden, conj, thought):
         ratings = self.softmax(self.scoring(torch.cat((premise_stack, conj, hidden), dim=-1)))
@@ -171,6 +170,7 @@ class PremiseSelectorGRU(torch.nn.Module):
 
 def train_selection(gen):
     net = PremiseSelectorGRU()
+    net.to(net.device)
     optimizer = torch.optim.Adam(net.parameters())
     loss = torch.nn.MSELoss()
     learning_curve = []
