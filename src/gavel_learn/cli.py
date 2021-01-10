@@ -92,20 +92,26 @@ def learn_selection(path, batch, m=False):
         with open(path, "r") as f:
             for row in json.load(f):
                 me = MapExtractor()
+                print("Load problem", row["path"])
                 problem = pparser.parse_from_file(os.path.join(settings.TPTP_ROOT,row["path"]))
                 premises = problem.premises
                 for imp in problem.imports:
                     try:
                         imp_prem = sources[imp.path]
+                        print("Reuse import", imp.path)
                     except KeyError:
+                        print("Create import cache", imp.path)
                         imp_prem = list(lparser.parse_from_file(os.path.join(settings.TPTP_ROOT, imp.path)))
                         sources[imp.path] = imp_prem
                     premises += imp_prem
                 used = []
+                print("Create mapping")
                 for prem in premises:
                     used.append(1.0 if prem.name in row["used"] else 0.0)
                 mapped_premises = [me.visit(prem) for prem in premises]
                 conjectures = [me.visit(c) for c in problem.conjectures]
+                print("Problem loaded")
+                print("")
                 if mapped_premises:
                     yield (mapped_premises, conjectures), used
     learn_memory(gen, m, batch)
