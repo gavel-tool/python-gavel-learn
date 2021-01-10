@@ -88,14 +88,19 @@ def learn_selection(path, batch, m=False):
     def gen():
         lparser= TPTPParser()
         pparser = TPTPProblemParser()
+        sources = {}
         with open(path, "r") as f:
             for row in json.load(f):
                 me = MapExtractor()
                 problem = pparser.parse_from_file(os.path.join(settings.TPTP_ROOT,row["path"]))
                 premises = problem.premises
                 for imp in problem.imports:
-                    for p in lparser.parse_from_file(os.path.join(settings.TPTP_ROOT, imp.path)):
-                        premises.append(p)
+                    try:
+                        imp_prem = sources[imp.path]
+                    except KeyError:
+                        imp_prem = list(lparser.parse_from_file(os.path.join(settings.TPTP_ROOT, imp.path)))
+                        sources[imp.path] = imp_prem
+                    premises += imp_prem
                 used = []
                 for prem in premises:
                     used.append(1.0 if prem.name in row["used"] else 0.0)
