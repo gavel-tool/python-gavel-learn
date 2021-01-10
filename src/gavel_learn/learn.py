@@ -7,10 +7,10 @@ import numpy as np
 from matplotlib import pyplot as plt
 from itertools import chain
 
-# if torch.cuda.is_available():
-#     DEVICE = torch.device("cuda:0")
-# else:
-DEVICE = torch.device("cpu:0")
+if torch.cuda.is_available():
+    DEVICE = torch.device("cuda:0")
+else:
+    DEVICE = torch.device("cpu:0")
 
 class FormulaNet(torch.nn.Module, Compiler):
 
@@ -33,11 +33,11 @@ class FormulaNet(torch.nn.Module, Compiler):
         self.leaf_net = torch.nn.Linear(self._leaf_factor * self.length + self._leaf_offset, self.length)
 
         self.embeddings = dict(
-            constants=torch.nn.Embedding(self.max_embeddings, self.length),
-            functors = torch.nn.Embedding(self.max_embeddings, self.length),
-            predicates = torch.nn.Embedding(self.max_embeddings, self.length),
-            binary_operators = torch.nn.Embedding(self.max_embeddings, self.length),
-            variables = torch.nn.Embedding(self.max_embeddings, self.length))
+            constants=torch.nn.Embedding(self.max_embeddings, self.length).to(self.device),
+            functors = torch.nn.Embedding(self.max_embeddings, self.length).to(self.device),
+            predicates = torch.nn.Embedding(self.max_embeddings, self.length).to(self.device),
+            binary_operators = torch.nn.Embedding(self.max_embeddings, self.length).to(self.device),
+            variables = torch.nn.Embedding(self.max_embeddings, self.length).to(self.device))
 
         self._null = torch.autograd.Variable(torch.randn(self.length)).to(self.device)
         self._masked = torch.zeros(self._leaf_factor * self.length + self._leaf_offset).to(self.device)
@@ -53,7 +53,7 @@ class FormulaNet(torch.nn.Module, Compiler):
 
     def visit_encoded_element(self, elem:EncodedElement):
         if elem.value < self.max_embeddings:
-            return self.embeddings[elem.kind](torch.tensor([elem.value])).squeeze(0)
+            return self.embeddings[elem.kind](torch.tensor([elem.value]).to(self.device)).squeeze(0)
         else:
             return self._null
 
