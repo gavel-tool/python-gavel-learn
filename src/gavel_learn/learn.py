@@ -154,11 +154,12 @@ class PremiseSelectorGRU(torch.nn.Module):
         self.conjecture_squash = torch.nn.GRU(self.formula_net.output_size, self.formula_net.output_size)
         self.gru = torch.nn.GRU(self.formula_net.output_size*2, self.formula_net.output_size, bidirectional=True)
         self.final = torch.nn.Linear(self.formula_net.output_size * 2, 1)
+        self._nothing = torch.autograd.Variable(torch.rand((1,self.formula_net.output_size)))
 
     def forward(self, data):
         premise_stack = torch.nn.utils.rnn.pad_sequence([torch.stack([self.formula_net.forward(p) for p in batch[0]]) for batch in data])
         conjecture_stack = torch.nn.utils.rnn.pad_sequence(
-            [torch.stack([self.formula_net.forward(c) for c in batch[1]]) for batch in
+            [torch.stack([self.formula_net.forward(c) for c in batch[1]]) if batch[1] else self._nothing for batch in
              data])
         num_prem = premise_stack.size()[0]
         batches = premise_stack.size()[1]
