@@ -16,7 +16,7 @@ Why does this file exist, and why not put this in __main__?
 """
 __all__ = ["learn"]
 import os
-
+import pickle
 import gavel.config.settings as settings
 from gavel_db.dialects.db.connection import with_session
 from gavel_db.dialects.db.parser import DBLogicParser, DBProblemParser
@@ -136,7 +136,14 @@ def _batchify(g, batch_size):
 def learn_memory(gen, m, b):
     g = _batchify(gen, b)
     if m:
-        _cache = list(g())
+        file_path = ".cache.pickle"
+        if os.path.isfile(file_path):
+            with open(file_path, "rb") as f:
+                _cache = pickle.load(f)
+        else:
+            _cache = list(g())
+            with open(file_path, "wb") as f:
+                pickle.dump(_cache, f)
 
         def g2():
             return _cache
