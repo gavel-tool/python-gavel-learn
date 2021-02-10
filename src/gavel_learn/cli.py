@@ -22,7 +22,7 @@ from gavel_db.dialects.db.connection import with_session
 from gavel_db.dialects.db.parser import DBLogicParser, DBProblemParser
 from gavel_db.dialects.db.structures import Formula
 from gavel_db.dialects.db import structures
-from gavel_learn.learn import train_masked, train_selection
+from gavel_learn.learn import train_selection
 from gavel_learn.simplifier import MapExtractor
 from gavel.dialects.tptp.parser import TPTPProblemParser, TPTPParser
 import json
@@ -80,41 +80,43 @@ def learn_selection_db(batch, m=False):
 
 
 @click.command()
-@click.argument("path", default=None)
 @click.argument("batch", default=None, type=int)
 @click.option("--m", default=False)
-def learn_selection(path, batch, m=False):
+def learn_selection(batch, m=False):
 
-    def gen():
-        lparser= TPTPParser()
-        pparser = TPTPProblemParser()
-        sources = {}
-        with open(path, "r") as f:
-            for row in json.load(f):
-                me = MapExtractor()
-                print("Load problem", row["path"])
-                problem = pparser.parse_from_file(os.path.join(settings.TPTP_ROOT,row["path"]))
-                premises = problem.premises
-                for imp in problem.imports:
-                    try:
-                        imp_prem = sources[imp.path]
-                        print("Reuse import", imp.path)
-                    except KeyError:
-                        print("Create import cache", imp.path)
-                        imp_prem = list(lparser.parse_from_file(os.path.join(settings.TPTP_ROOT, imp.path)))
-                        sources[imp.path] = imp_prem
-                    premises += imp_prem
-                used = []
-                print("Create mapping")
-                for prem in premises:
-                    used.append(1.0 if prem.name in row["used"] else 0.0)
-                mapped_premises = [me.visit(prem) for prem in premises]
-                conjectures = [me.visit(c) for c in problem.conjectures]
-                print("Problem loaded")
-                print("")
-                if mapped_premises:
-                    yield (mapped_premises, conjectures), used
-    learn_memory(gen, m, batch)
+    def create_generator(path):
+        def gen():
+            lparser= TPTPParser()
+            pparser = TPTPProblemParser()
+            sources = {}
+            with open(path, "r") as f:
+                for row in json.load(f):
+                    me = MapExtractor()
+                    print("Load problem", row["path"])
+                    problem = pparser.parse_from_file(os.path.join(settings.TPTP_ROOT,row["path"]))
+                    premises = problem.premises
+                    for imp in problem.imports:
+                        try:
+                            imp_prem = sources[imp.path]
+                            print("Reuse import", imp.path)
+                        except KeyError:
+                            print("Create import cache", imp.path)
+                            imp_prem = list(lparser.parse_from_file(os.path.join(settings.TPTP_ROOT, imp.path)))
+                            sources[imp.path] = imp_prem
+                        premises += imp_prem
+                    used = []
+                    print("Create mapping")
+                    for prem in premises:
+                        used.append(1.0 if prem.name in row["used"] else 0.0)
+                    mapped_premises = [me.visit(prem) for prem in premises]
+                    conjectures = [me.visit(c) for c in problem.conjectures]
+                    print("Problem loaded")
+                    print("")
+                    if mapped_premises:
+                        yield (mapped_premises, conjectures), used
+                        return
+        return gen
+    learn_memory(create_generator(".data/train.json"), create_generator(".data/val.json"), m, batch)
 
 
 def _batchify(g, batch_size):
@@ -132,24 +134,28 @@ def _batchify(g, batch_size):
             yield data_batch, label_batch
     return inner
 
-
-def learn_memory(gen, m, b):
-    g = _batchify(gen, b)
-    if m:
-        file_path = ".cache.pickle"
-        if os.path.isfile(file_path):
-            with open(file_path, "rb") as f:
-                _cache = pickle.load(f)
-        else:
-            _cache = list(g())
-            with open(file_path, "wb") as f:
-                pickle.dump(_cache, f)
-
-        def g2():
-            return _cache
-        return train_selection(g2)
+def load_cache(path, g):
+    file_path = path
+    if os.path.isfile(file_path):
+        with open(file_path, "rb") as f:
+            _cache = pickle.load(f)
     else:
-        return train_selection(g)
+        _cache = list(g())
+        with open(file_path, "wb") as f:
+            pickle.dump(_cache, f)
+
+    def g2():
+        return _cache
+
+    return g2
+
+def learn_memory(gen, gen_val, m, b):
+    g = _batchify(gen, b)
+    g_val = _batchify(gen_val, b)
+    if m:
+        return train_selection(load_cache(".cache.pkl", g), load_cache(".val_cache.pkl", g_val))
+    else:
+        return train_selection(g, g_val)
 
 
 learn.add_command(learn_masked)

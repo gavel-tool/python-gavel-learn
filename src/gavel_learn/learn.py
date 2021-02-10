@@ -6,6 +6,8 @@ from gavel_learn.simplifier import MapExtractor, MaskCompiler, MaskedElement, En
 import numpy as np
 from matplotlib import pyplot as plt
 from itertools import chain
+from sklearn import metrics
+
 
 class FormulaNet(torch.nn.Module, Compiler):
 
@@ -43,6 +45,7 @@ class FormulaNet(torch.nn.Module, Compiler):
 
         self._null = torch.autograd.Variable(torch.randn(self.length))
         self._masked = torch.zeros(self._leaf_factor * self.length + self._leaf_offset)
+
 
     """def _generate_encodings(self, index):
         identifiers = torch.stack(
@@ -168,88 +171,43 @@ class PremiseSelectorGRU(torch.nn.Module):
         return self.final(o).squeeze(-1)
 
 
-def train_selection(gen):
+def train_selection(gen, gen_val):
     net = PremiseSelectorGRU()
     optimizer = torch.optim.Adam(net.parameters())
     loss = torch.nn.MSELoss()
     learning_curve = []
+    min_loss = None
     for epoch in range(100):
-        print("Epoch", epoch)
-        i = 0
-        batch_loss = 0
-        batchnumber = 0
-        for data, labels in gen():
-            batchnumber += 1
-            print("Process batch", batchnumber)
-            optimizer.zero_grad()
-            predictions = net.forward(data)
-            ls = torch.nn.utils.rnn.pad_sequence([torch.tensor(l) for l in labels])
-            l = loss(predictions, ls)
-            l.backward()
-            batch_loss += l.item()
-            optimizer.step()
-            i += len(data)
-            print(f"Step {i}: loss {l.item()}")
-        learning_curve.append(batch_loss / batchnumber)
-        torch.save(net.state_dict(), "mask_encoder.{i}.state".format(i=epoch))
+        curr_loss, f1 = execute(loss, gen, optimizer, net)
+        val_loss, val_f1 = execute(loss, gen_val, optimizer, net)
+        print(epoch, ",".join(("{0:.5f}".format(x) for x in [curr_loss, f1, val_loss, val_f1])))
+        if min_loss is None or min_loss > val_loss:
+            min_loss = val_loss
+            torch.save(net.state_dict(), "model.{i}.best".format(i=epoch))
+        learning_curve.append(curr_loss)
+
     plt.plot(np.array(learning_curve), 'r')
     plt.savefig("curve.png")
     with open("curve.json", "w") as o:
         o.write(str(learning_curve))
+    torch.save(net.state_dict(), "model.last")
     print('Finished Training')
 
 
-def train_masked(gen):
-    net = FormulaNet()
-    mc = MaskCompiler()
-    optimizer = torch.optim.Adam(net.parameters())
-    loss = torch.nn.MSELoss()
-    learning_curve = []
-    for epoch in range(100):
-        print("Epoch", epoch)
-        i = 0
-        batch_loss = 0
-        batchnumber = 0
-        for batch in gen():
-            labels = []
-            predictions = []
-            optimizer.zero_grad()
-            for f in batch:
-                net.prepare(f)
-                x = mc.visit(f)
-                if len(x) != 2:
-                    print(f"Could not process {f}. Compiler returned {x}")
-                    continue
-                formula, lab = x
-                label = None
-                if isinstance(lab, fol.Constant):
-                    label = net._constant_cache[lab.symbol]
-                elif isinstance(lab, fol.DefinedConstant):
-                    label = net._constant_cache[lab.symbol]
-                elif isinstance(lab, fol.DistinctObject):
-                    label = net._constant_cache[lab.symbol]
-                elif isinstance(lab, tuple):
-                    if lab[1] == "predicate":
-                        label = net._predicate_cache[lab[0]]
-                    elif lab[1] == "functor":
-                        label = net._functor_cache[lab[0]]
-                if label is None:
-                    raise Exception(f"Missing handler for {lab} in {formula}")
-                else:
-                    labels.append(label)
-                    predictions.append(net.forward(formula))
-            l = loss(torch.stack(predictions), torch.stack(labels))
-            l.backward()
-            batch_loss += l.item()
-            optimizer.step()
-            i += len(batch)
-            batchnumber += 1
-            print(f"Step {i}: loss {l.item()}")
-        learning_curve.append(batch_loss/batchnumber)
-    plt.plot(np.array(learning_curve), 'r')
-    plt.savefig("curve.png")
-    with open("curve.json", "w") as o:
-        o.write(str(learning_curve))
-
-    torch.save(net.state_dict(), "mask_encoder.state")
-    print('Finished Training')
+def execute(loss, gen, optimizer, net):
+    i = 0
+    batch_loss = 0
+    batchnumber = 0
+    running_f1 = 0
+    for data, labels in gen():
+        batchnumber += 1
+        optimizer.zero_grad()
+        predictions = net.forward(data)
+        ls = torch.nn.utils.rnn.pad_sequence([torch.tensor(l) for l in labels])
+        l = loss(predictions, ls)
+        running_f1 += metrics.f1_score(ls>0.5, predictions>0.5)
+        l.backward()
+        batch_loss += l.item()
+        optimizer.step()
+        i += len(data)
+    return batch_loss / batchnumber, running_f1 / batchnumber

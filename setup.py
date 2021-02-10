@@ -76,7 +76,8 @@ setup(
         'torch',
         'pandas',
         'matplotlib',
-        'numpy'
+        'numpy',
+        'sklearn'
     ],
     extras_require={
         # eg:
